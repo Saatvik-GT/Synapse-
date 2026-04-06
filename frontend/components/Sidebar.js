@@ -1,14 +1,15 @@
 import React from 'react';
 import { BookMarked, Star, Users, Bell, Settings, TrendingUp, GraduationCap, Pin } from 'lucide-react';
+import { LayoutDashboard, List, AlertTriangle, BarChart3, Settings } from 'lucide-react';
 
 export default function Sidebar({ userName }) {
   const menuItems = [
-    { icon: BookMarked, label: 'Repositories', href: '#' },
-    { icon: Star, label: 'Starred', href: '#' },
-    { icon: Users, label: 'Followers', href: '#' },
-    { icon: Bell, label: 'Notifications', href: '#' },
-    { icon: Settings, label: 'Settings', href: '#' },
-  ];
+  { icon: LayoutDashboard, id: 'dashboard', label: 'Dashboard' },
+  { icon: List, id: 'issues', label: 'Issues' },
+  { icon: AlertTriangle, id: 'priority', label: 'Priority' },
+  { icon: BarChart3, id: 'insights', label: 'Insights' },
+  { icon: Settings, id: 'settings', label: 'Settings' },
+];
 
   const quickFilters = [
     { icon: TrendingUp, label: 'Trending' },
