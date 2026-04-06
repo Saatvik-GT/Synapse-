@@ -19,6 +19,10 @@ export default function Home() {
   const [commitsData, setCommitsData] = useState([]);
   const [pullRequestsData, setPullRequestsData] = useState([]);
   const [issuesData, setIssuesData] = useState([]);
+  const [commitsError, setCommitsError] = useState(null);
+  const [prsError, setPrsError] = useState(null);
+  const [issuesError, setIssuesError] = useState(null);
+  const [extrasLoading, setExtrasLoading] = useState(false);
 
   const searchInputRef = useRef(null);
 
@@ -77,68 +81,82 @@ export default function Home() {
     }
   };
 
-  const fetchRepoExtras = async (owner, repo) => {
+  const parseApiError = async (res) => {
     try {
-      const [commitsRes, prsRes, issuesRes] = await Promise.all([
-        fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=25`),
-        fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=30`),
-        fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=all&per_page=50`),
-      ]);
-
-      // Commits
-      if (commitsRes.ok) {
-        const commitsJson = await commitsRes.json();
-        setCommitsData(
-          commitsJson.map((c) => ({
-            sha: c.sha.slice(0, 7),
-            message: c.commit.message.split('\n')[0],
-            author: c.commit.author?.name || 'Unknown',
-            timestamp: timeAgo(c.commit.author?.date),
-          }))
-        );
-      } else {
-        setCommitsData([]);
+      const json = await res.json();
+      if (json.message) {
+        if (json.message.toLowerCase().includes('rate limit')) return 'GitHub API rate limit exceeded. Try again later.';
+        return json.message;
       }
+    } catch {}
+    return `Request failed (HTTP ${res.status})`;
+  };
 
-      // Pull Requests
-      if (prsRes.ok) {
-        const prsJson = await prsRes.json();
-        setPullRequestsData(
-          prsJson.map((pr) => ({
-            id: pr.id,
-            title: pr.title,
-            state: pr.state,
-            number: pr.number,
-            createdAt: timeAgo(pr.created_at),
-          }))
-        );
-      } else {
-        setPullRequestsData([]);
-      }
+  const fetchRepoExtras = async (owner, repo) => {
+    setExtrasLoading(true);
+    setCommitsError(null);
+    setPrsError(null);
+    setIssuesError(null);
 
-      // Issues (exclude PRs — GitHub API returns PRs in /issues too)
-      if (issuesRes.ok) {
-        const issuesJson = await issuesRes.json();
-        setIssuesData(
-          issuesJson
-            .filter((issue) => !issue.pull_request)
-            .map((issue) => ({
-              id: issue.id,
-              number: issue.number,
-              title: issue.title,
-              state: issue.state,
-              createdAt: timeAgo(issue.created_at),
-            }))
-        );
-      } else {
-        setIssuesData([]);
-      }
-    } catch (err) {
-      console.error('Error fetching repo extras:', err);
+    const [commitsRes, prsRes, issuesRes] = await Promise.all([
+      fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=25`),
+      fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=30`),
+      fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=all&per_page=50`),
+    ]);
+
+    // Commits
+    if (commitsRes.ok) {
+      const commitsJson = await commitsRes.json();
+      setCommitsData(
+        commitsJson.map((c) => ({
+          sha: c.sha.slice(0, 7),
+          message: c.commit.message.split('\n')[0],
+          author: c.commit.author?.name || 'Unknown',
+          timestamp: timeAgo(c.commit.author?.date),
+        }))
+      );
+    } else {
       setCommitsData([]);
-      setPullRequestsData([]);
-      setIssuesData([]);
+      setCommitsError(await parseApiError(commitsRes));
     }
+
+    // Pull Requests
+    if (prsRes.ok) {
+      const prsJson = await prsRes.json();
+      setPullRequestsData(
+        prsJson.map((pr) => ({
+          id: pr.id,
+          title: pr.title,
+          state: pr.state,
+          number: pr.number,
+          createdAt: timeAgo(pr.created_at),
+        }))
+      );
+    } else {
+      setPullRequestsData([]);
+      setPrsError(await parseApiError(prsRes));
+    }
+
+    // Issues (exclude PRs — GitHub API returns PRs in /issues too)
+    if (issuesRes.ok) {
+      const issuesJson = await issuesRes.json();
+      setIssuesData(
+        issuesJson
+          .filter((issue) => !issue.pull_request)
+          .map((issue) => ({
+            id: issue.id,
+            number: issue.number,
+            title: issue.title,
+            state: issue.state,
+            createdAt: timeAgo(issue.created_at),
+          }))
+      );
+    } else {
+      setIssuesData([]);
+      setIssuesError(await parseApiError(issuesRes));
+    }
+
+    setExtrasLoading(false);
   };
 
   useEffect(() => {
@@ -279,9 +297,9 @@ export default function Home() {
 
               {/* Content Row: Commits | PRs | Issues — fills remaining height */}
               <div className="grid grid-cols-3 gap-5 flex-1 min-h-0 overflow-hidden">
-                <ActivitiesCard commits={commitsData} />
-                <PullRequestsCard pullRequests={pullRequestsData} />
-                <IssuesCard issues={issuesData} />
+                <ActivitiesCard commits={commitsData} error={commitsError} loading={extrasLoading} />
+                <PullRequestsCard pullRequests={pullRequestsData} error={prsError} loading={extrasLoading} />
+                <IssuesCard issues={issuesData} error={issuesError} loading={extrasLoading} />
               </div>
             </>
           )}
