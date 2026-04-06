@@ -57,31 +57,32 @@ from typing import Any
 
 # ── Environment ───────────────────────────────────────────────────────────────
 
-GITHUB_TOKEN    = os.environ["GITHUB_TOKEN"]
-ISSUE_NUMBER    = int(os.environ["ISSUE_NUMBER"])
-ISSUE_TITLE     = os.environ.get("ISSUE_TITLE", "") or ""
-ISSUE_BODY      = os.environ.get("ISSUE_BODY", "") or ""
-REPO_OWNER      = os.environ["REPO_OWNER"]
-REPO_NAME       = os.environ["REPO_NAME"]
+GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
+ISSUE_NUMBER = int(os.environ["ISSUE_NUMBER"])
+ISSUE_TITLE = os.environ.get("ISSUE_TITLE", "") or ""
+ISSUE_BODY = os.environ.get("ISSUE_BODY", "") or ""
+REPO_OWNER = os.environ["REPO_OWNER"]
+REPO_NAME = os.environ["REPO_NAME"]
 SYNAPSE_API_URL = os.environ.get("SYNAPSE_API_URL", "").rstrip("/")
 
 _GITHUB_API = "https://api.github.com"
 
 # ── GitHub REST helpers ───────────────────────────────────────────────────────
 
+
 def _gh_request(method: str, path: str, body: dict[str, Any] | None = None) -> Any:
-    url  = f"{_GITHUB_API}{path}"
+    url = f"{_GITHUB_API}{path}"
     data = json.dumps(body).encode() if body is not None else None
-    req  = urllib.request.Request(
+    req = urllib.request.Request(
         url,
         data=data,
         method=method,
         headers={
-            "Authorization":        f"Bearer {GITHUB_TOKEN}",
-            "Accept":               "application/vnd.github+json",
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type":         "application/json",
-            "User-Agent":           "synapse-triage-bot/1.0",
+            "Content-Type": "application/json",
+            "User-Agent": "synapse-triage-bot/1.0",
         },
     )
     try:
@@ -116,6 +117,7 @@ def add_labels(labels: list[str]) -> None:
 
 # ── Backend /api/analyze call ─────────────────────────────────────────────────
 
+
 def call_analyze_api() -> dict[str, Any] | None:
     """
     POST {SYNAPSE_API_URL}/api/analyze with the issue payload.
@@ -125,12 +127,19 @@ def call_analyze_api() -> dict[str, Any] | None:
         return None
 
     payload = {
-        "number": ISSUE_NUMBER,
-        "title":  ISSUE_TITLE,
-        "body":   ISSUE_BODY,
-        "labels": [],
-        "owner":  REPO_OWNER,
-        "repo":   REPO_NAME,
+        "owner": REPO_OWNER,
+        "repo": REPO_NAME,
+        "token": GITHUB_TOKEN,
+        "k": 5,
+        "state": "all",
+        "include_pull_requests": False,
+        "target_issue": {
+            "number": ISSUE_NUMBER,
+            "title": ISSUE_TITLE,
+            "body": ISSUE_BODY,
+            "labels": [],
+            "state": "open",
+        },
     }
     req = urllib.request.Request(
         f"{SYNAPSE_API_URL}/api/analyze",
@@ -138,14 +147,14 @@ def call_analyze_api() -> dict[str, Any] | None:
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "User-Agent":   "synapse-triage-bot/1.0",
+            "User-Agent": "synapse-triage-bot/1.0",
         },
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             result = json.loads(resp.read())
             print("[triage] /api/analyze succeeded.")
-            return result
+            return _normalize_api_result(result)
     except Exception as exc:
         print(
             f"[triage] /api/analyze unavailable ({exc}). Falling back to mock mode.",
@@ -154,47 +163,229 @@ def call_analyze_api() -> dict[str, Any] | None:
         return None
 
 
+def _normalize_api_result(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize canonical AnalyzeResponse into legacy TriageResult-like fields
+    expected by markdown rendering and label application.
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    predicted_type_section = raw.get("predicted_type")
+    if not isinstance(predicted_type_section, dict):
+        # Legacy flat payload or unknown shape; return as-is.
+        return raw
+
+    suggested_labels_section = raw.get("suggested_labels")
+    duplicate_candidates_section = raw.get("duplicate_candidates")
+    priority_section = raw.get("priority")
+    missing_information_section = raw.get("missing_information")
+    explanation_section = raw.get("explanation")
+
+    duplicate_items = []
+    if isinstance(duplicate_candidates_section, dict):
+        items = duplicate_candidates_section.get("items")
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                score = (
+                    item.get("final_score")
+                    if item.get("final_score") is not None
+                    else item.get("rerank_score")
+                    if item.get("rerank_score") is not None
+                    else item.get("similarity_score")
+                    if item.get("similarity_score") is not None
+                    else 0.0
+                )
+                duplicate_items.append(
+                    {
+                        "issue_number": item.get("issue_number"),
+                        "title": str(item.get("title") or ""),
+                        "similarity": float(score),
+                    }
+                )
+
+    suggested_labels_items: list[str] = []
+    if isinstance(suggested_labels_section, dict):
+        raw_labels = suggested_labels_section.get("items")
+        if isinstance(raw_labels, list):
+            suggested_labels_items = [
+                str(label).strip() for label in raw_labels if str(label).strip()
+            ]
+
+    missing_items: list[str] = []
+    if isinstance(missing_information_section, dict):
+        raw_missing = missing_information_section.get("items")
+        if isinstance(raw_missing, list):
+            missing_items = [
+                str(item).strip() for item in raw_missing if str(item).strip()
+            ]
+
+    priority_score = 0
+    priority_band = "medium"
+    priority_reasons: list[str] = []
+    if isinstance(priority_section, dict):
+        score = priority_section.get("score")
+        if isinstance(score, (int, float)):
+            priority_score = int(score)
+        band = priority_section.get("band")
+        if isinstance(band, str) and band.strip():
+            priority_band = band.strip()
+        raw_reasons = priority_section.get("reasons")
+        if isinstance(raw_reasons, list):
+            priority_reasons = [
+                str(reason).strip() for reason in raw_reasons if str(reason).strip()
+            ]
+
+    predicted_label = str(predicted_type_section.get("label") or "other")
+    predicted_confidence = predicted_type_section.get("confidence")
+    if not isinstance(predicted_confidence, (int, float)):
+        predicted_confidence = 0.0
+
+    duplicate_confidence = 0.0
+    if isinstance(duplicate_candidates_section, dict):
+        confidence = duplicate_candidates_section.get("confidence")
+        if isinstance(confidence, (int, float)):
+            duplicate_confidence = float(confidence)
+
+    summary = ""
+    if isinstance(explanation_section, dict):
+        maybe_summary = explanation_section.get("summary")
+        if isinstance(maybe_summary, str):
+            summary = maybe_summary
+
+    return {
+        "issue_id": str(raw.get("issue_id") or ISSUE_NUMBER),
+        "predicted_type": predicted_label,
+        "type_confidence": float(predicted_confidence),
+        "priority_score": priority_score,
+        "priority_band": priority_band,
+        "priority_reasons": priority_reasons,
+        "duplicate_confidence": duplicate_confidence,
+        "similar_issues": duplicate_items,
+        "suggested_labels": suggested_labels_items,
+        "missing_information": missing_items,
+        "summary": summary,
+        "analysis_version": str(raw.get("analysis_version") or "v0"),
+    }
+
+
 # ── Keyword-based mock triage ─────────────────────────────────────────────────
 
 _TYPE_KEYWORDS: dict[str, list[str]] = {
     "bug": [
-        "bug", "crash", "error", "exception", "fail", "failure", "broken",
-        "wrong", "incorrect", "regression", "traceback", "panic", "segfault",
-        "not working", "doesn't work", "does not work",
+        "bug",
+        "crash",
+        "error",
+        "exception",
+        "fail",
+        "failure",
+        "broken",
+        "wrong",
+        "incorrect",
+        "regression",
+        "traceback",
+        "panic",
+        "segfault",
+        "not working",
+        "doesn't work",
+        "does not work",
     ],
     "feature": [
-        "feature", "enhancement", "request", "add support", "implement",
-        "new feature", "allow", "enable", "wish", "proposal", "would be nice",
+        "feature",
+        "enhancement",
+        "request",
+        "add support",
+        "implement",
+        "new feature",
+        "allow",
+        "enable",
+        "wish",
+        "proposal",
+        "would be nice",
     ],
     "question": [
-        "question", "how to", "how do", "why does", "what is", "where is",
-        "is it possible", "can i", "help", "confused", "unclear",
+        "question",
+        "how to",
+        "how do",
+        "why does",
+        "what is",
+        "where is",
+        "is it possible",
+        "can i",
+        "help",
+        "confused",
+        "unclear",
     ],
     "docs": [
-        "docs", "documentation", "readme", "example", "tutorial", "guide",
-        "typo", "spelling", "grammar", "clarify", "outdated",
+        "docs",
+        "documentation",
+        "readme",
+        "example",
+        "tutorial",
+        "guide",
+        "typo",
+        "spelling",
+        "grammar",
+        "clarify",
+        "outdated",
     ],
     "security": [
-        "security", "vulnerability", "cve", "exploit", "injection", "xss",
-        "csrf", "auth bypass", "privilege escalation", "rce", "ssrf",
+        "security",
+        "vulnerability",
+        "cve",
+        "exploit",
+        "injection",
+        "xss",
+        "csrf",
+        "auth bypass",
+        "privilege escalation",
+        "rce",
+        "ssrf",
     ],
 }
 
 _HIGH_PRIORITY_KEYWORDS = [
-    "critical", "urgent", "blocker", "block", "data loss", "security",
-    "vulnerability", "outage", "production down", "regression", "crash",
+    "critical",
+    "urgent",
+    "blocker",
+    "block",
+    "data loss",
+    "security",
+    "vulnerability",
+    "outage",
+    "production down",
+    "regression",
+    "crash",
 ]
 _LOW_PRIORITY_KEYWORDS = [
-    "minor", "nice to have", "cosmetic", "typo", "small", "trivial",
-    "low priority", "whenever", "eventually",
+    "minor",
+    "nice to have",
+    "cosmetic",
+    "typo",
+    "small",
+    "trivial",
+    "low priority",
+    "whenever",
+    "eventually",
 ]
 
 # Patterns checked for missing info (only enforced for bug reports)
 _MISSING_INFO_PATTERNS: list[tuple[str, str]] = [
-    (r"steps to reproduce|repro steps|how to reproduce|reproduction", "Steps to reproduce"),
-    (r"expected behavior|expected result|expected output",             "Expected behavior"),
-    (r"actual behavior|actual result|observed behavior|actual output", "Actual behavior"),
-    (r"version|v\d+[\.\d]*|\d+\.\d+\.\d+|python \d|node \d",         "Version / environment info"),
+    (
+        r"steps to reproduce|repro steps|how to reproduce|reproduction",
+        "Steps to reproduce",
+    ),
+    (r"expected behavior|expected result|expected output", "Expected behavior"),
+    (
+        r"actual behavior|actual result|observed behavior|actual output",
+        "Actual behavior",
+    ),
+    (
+        r"version|v\d+[\.\d]*|\d+\.\d+\.\d+|python \d|node \d",
+        "Version / environment info",
+    ),
 ]
 
 
@@ -204,36 +395,38 @@ def _keyword_score(text: str, keywords: list[str]) -> int:
 
 
 def mock_triage() -> dict[str, Any]:
-    combined       = f"{ISSUE_TITLE}\n\n{ISSUE_BODY}".strip()
+    combined = f"{ISSUE_TITLE}\n\n{ISSUE_BODY}".strip()
     combined_lower = combined.lower()
-    body_len       = len(ISSUE_BODY.strip())
+    body_len = len(ISSUE_BODY.strip())
 
     # ── Type detection ────────────────────────────────────────────────────────
-    scores = {t: _keyword_score(combined_lower, kws) for t, kws in _TYPE_KEYWORDS.items()}
-    best_type  = max(scores, key=lambda t: scores[t])
+    scores = {
+        t: _keyword_score(combined_lower, kws) for t, kws in _TYPE_KEYWORDS.items()
+    }
+    best_type = max(scores, key=lambda t: scores[t])
     best_score = scores[best_type]
     predicted_type = best_type if best_score > 0 else "other"
-    total          = sum(scores.values()) or 1
+    total = sum(scores.values()) or 1
     type_confidence = round(scores.get(predicted_type, 0) / total, 2)
 
     # ── Priority ──────────────────────────────────────────────────────────────
     high_hits = _keyword_score(combined_lower, _HIGH_PRIORITY_KEYWORDS)
-    low_hits  = _keyword_score(combined_lower, _LOW_PRIORITY_KEYWORDS)
+    low_hits = _keyword_score(combined_lower, _LOW_PRIORITY_KEYWORDS)
 
     if predicted_type == "security" or high_hits >= 2:
-        priority_band  = "critical"
+        priority_band = "critical"
         priority_score = 10
         priority_reasons: list[str] = ["Matches critical-impact or security keywords"]
     elif high_hits >= 1 or predicted_type == "bug":
-        priority_band  = "high"
+        priority_band = "high"
         priority_score = 7
         priority_reasons = ["Bug report or high-impact signal detected"]
     elif low_hits >= 1 or predicted_type in ("docs", "question"):
-        priority_band  = "low"
+        priority_band = "low"
         priority_score = 2
         priority_reasons = ["Documentation / question type or low-impact keywords"]
     else:
-        priority_band  = "medium"
+        priority_band = "medium"
         priority_score = 5
         priority_reasons = ["No strong priority signal — defaulting to medium"]
 
@@ -261,16 +454,16 @@ def mock_triage() -> dict[str, Any]:
         suggested_labels.append("needs more info")
 
     return {
-        "issue_id":             str(ISSUE_NUMBER),
-        "predicted_type":       predicted_type,
-        "type_confidence":      type_confidence,
-        "priority_score":       priority_score,
-        "priority_band":        priority_band,
-        "priority_reasons":     priority_reasons,
+        "issue_id": str(ISSUE_NUMBER),
+        "predicted_type": predicted_type,
+        "type_confidence": type_confidence,
+        "priority_score": priority_score,
+        "priority_band": priority_band,
+        "priority_reasons": priority_reasons,
         "duplicate_confidence": 0.0,
-        "similar_issues":       [],
-        "suggested_labels":     suggested_labels,
-        "missing_information":  missing,
+        "similar_issues": [],
+        "suggested_labels": suggested_labels,
+        "missing_information": missing,
         "summary": (
             f"Auto-triaged as **{predicted_type}** with **{priority_band}** priority "
             f"(mock mode, no Synapse API configured)."
@@ -282,27 +475,38 @@ def mock_triage() -> dict[str, Any]:
 # ── Markdown comment builder ──────────────────────────────────────────────────
 
 _PRIORITY_ICON: dict[str, str] = {
-    "critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢",
+    "critical": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "🟢",
 }
 _TYPE_ICON: dict[str, str] = {
-    "bug": "🐛", "feature": "✨", "question": "❓",
-    "docs": "📖", "security": "🔒", "other": "📌",
+    "bug": "🐛",
+    "feature": "✨",
+    "question": "❓",
+    "docs": "📖",
+    "security": "🔒",
+    "other": "📌",
+    "feature_request": "✨",
+    "documentation": "📖",
+    "support_question": "❓",
+    "spam_or_noise": "🧹",
 }
 
 
 def build_comment(result: dict[str, Any], *, used_api: bool) -> str:
-    mode_label     = "Synapse API" if used_api else "keyword mock"
-    ptype          = result.get("predicted_type", "other")
+    mode_label = "Synapse API" if used_api else "keyword mock"
+    ptype = result.get("predicted_type", "other")
     confidence_pct = int(result.get("type_confidence", 0) * 100)
-    p_band         = result.get("priority_band", "medium")
-    p_score        = result.get("priority_score", 5)
-    p_reasons      = result.get("priority_reasons") or []
-    dup_pct        = int(result.get("duplicate_confidence", 0) * 100)
-    similar        = result.get("similar_issues") or []
-    labels         = result.get("suggested_labels") or []
-    missing        = result.get("missing_information") or []
-    summary        = result.get("summary", "")
-    version        = result.get("analysis_version", "v0")
+    p_band = result.get("priority_band", "medium")
+    p_score = result.get("priority_score", 5)
+    p_reasons = result.get("priority_reasons") or []
+    dup_pct = int(result.get("duplicate_confidence", 0) * 100)
+    similar = result.get("similar_issues") or []
+    labels = result.get("suggested_labels") or []
+    missing = result.get("missing_information") or []
+    summary = result.get("summary", "")
+    version = result.get("analysis_version", "v0")
 
     t_icon = _TYPE_ICON.get(ptype, "📌")
     p_icon = _PRIORITY_ICON.get(p_band, "⚪")
@@ -336,13 +540,18 @@ def build_comment(result: dict[str, Any], *, used_api: bool) -> str:
     if similar:
         lines += ["### Possible Duplicates", ""]
         for s in similar[:5]:
-            num   = s.get("number") or s.get("issue_number", "?")
+            num = s.get("number") or s.get("issue_number", "?")
             title = s.get("title", "")
-            sim   = int(s.get("similarity", s.get("score", 0)) * 100)
+            sim = int(s.get("similarity", s.get("score", 0)) * 100)
             lines.append(f"- #{num} — {title} ({sim}% similar)")
         lines += [""]
     elif dup_pct > 20:
-        lines += ["### Possible Duplicates", "", "_No candidates retrieved in this run._", ""]
+        lines += [
+            "### Possible Duplicates",
+            "",
+            "_No candidates retrieved in this run._",
+            "",
+        ]
 
     if missing:
         lines += [
@@ -367,13 +576,14 @@ def build_comment(result: dict[str, Any], *, used_api: bool) -> str:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     print(f"[triage] Issue #{ISSUE_NUMBER}: {ISSUE_TITLE!r}")
     print(f"[triage] SYNAPSE_API_URL={'set' if SYNAPSE_API_URL else 'not set'}")
 
     api_result = call_analyze_api()
-    used_api   = api_result is not None
-    result     = api_result if used_api else mock_triage()
+    used_api = api_result is not None
+    result = api_result if used_api else mock_triage()
 
     comment = build_comment(result, used_api=used_api)
 
