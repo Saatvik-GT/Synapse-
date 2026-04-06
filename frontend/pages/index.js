@@ -14,6 +14,8 @@ export default function Home() {
   const [error, setError] = useState(null);
   const [showSearchBar, setShowSearchBar] = useState(false);
   const [searchValue, setSearchValue] = useState('');
+  const [activitiesData, setActivitiesData] = useState([]);
+  const [pullRequestsData, setPullRequestsData] = useState([]);
 
   // Parse repo link to extract owner and repo name
   const parseRepoLink = (input) => {
@@ -57,11 +59,96 @@ export default function Home() {
       if (!ownerRes.ok) throw new Error('Owner not found');
       const ownerDataResponse = await ownerRes.json();
       setRepoOwner(ownerDataResponse);
+
+      // Fetch additional repository-related data (events, PRs)
+      await fetchRepoExtras(owner, repo);
     } catch (err) {
       setError(err.message);
       console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Convert ISO timestamp to relative time (simple)
+  const timeAgo = (iso) => {
+    try {
+      const delta = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (delta < 60) return `${delta}s ago`;
+      if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+      if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+      return `${Math.floor(delta / 86400)}d ago`;
+    } catch (e) {
+      return iso;
+    }
+  };
+
+  // Fetch events and PRs for the repository and map to UI models
+  const fetchRepoExtras = async (owner, repo) => {
+    try {
+      // Events (activity)
+      const eventsRes = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/events?per_page=20`
+      );
+      if (eventsRes.ok) {
+        const eventsJson = await eventsRes.json();
+        const mapped = eventsJson.map((ev) => {
+          const type = ev.type;
+          const repoName = ev.repo?.name || `${owner}/${repo}`;
+          let message = '';
+          if (type === 'PushEvent') {
+            const commits = ev.payload?.commits || [];
+            message = `${commits.length} commit(s) pushed`;
+            if (commits.length && commits[0].message) {
+              message += ` — ${commits[0].message.slice(0, 80)}`;
+            }
+          } else if (type === 'PullRequestEvent') {
+            const pr = ev.payload?.pull_request;
+            message = `${ev.payload?.action || ''} pull request`;
+            if (pr?.title) message += ` — ${pr.title.slice(0, 80)}`;
+          } else if (type === 'IssuesEvent') {
+            const issue = ev.payload?.issue;
+            message = `${ev.payload?.action || ''} issue #${issue?.number || ''}`;
+            if (issue?.title) message += ` — ${issue.title.slice(0, 80)}`;
+          } else {
+            message = type;
+          }
+
+          return {
+            id: ev.id,
+            type,
+            repo: repoName,
+            message,
+            timestamp: timeAgo(ev.created_at),
+          };
+        });
+        setActivitiesData(mapped);
+      } else {
+        setActivitiesData([]);
+      }
+
+      // Pull requests
+      const prsRes = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=10`
+      );
+      if (prsRes.ok) {
+        const prsJson = await prsRes.json();
+        const mappedPRs = prsJson.map((pr) => ({
+          id: pr.id,
+          title: pr.title,
+          state: pr.state,
+          number: pr.number,
+          repo: `${owner}/${repo}`,
+          createdAt: timeAgo(pr.created_at),
+        }));
+        setPullRequestsData(mappedPRs);
+      } else {
+        setPullRequestsData([]);
+      }
+    } catch (err) {
+      console.error('Error fetching extras:', err);
+      setActivitiesData([]);
+      setPullRequestsData([]);
     }
   };
 
@@ -182,10 +269,10 @@ export default function Home() {
                 </div>
 
                 {/* Middle Column: Activities */}
-                <ActivitiesCard activities={[]} />
+                <ActivitiesCard activities={activitiesData} />
 
                 {/* Right Column: Pull Requests & Issues */}
-                <PullRequestsCard pullRequests={[]} />
+                <PullRequestsCard pullRequests={pullRequestsData} />
               </div>
             </>
           )}
