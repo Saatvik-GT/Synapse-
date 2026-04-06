@@ -7,6 +7,7 @@ import ActivitiesCard from '../components/ActivitiesCard';
 import PullRequestsCard from '../components/PullRequestsCard';
 import IssuesCard from '../components/IssuesCard';
 import SearchModal from '../components/SearchModal';
+import { buildIssueListUrl, mapIssueListPayloadToCardIssues } from '../lib/issueListContract';
 import { Star, GitFork, Eye, CircleDot, Search } from 'lucide-react';
 
 export default function Home() {
@@ -125,10 +126,12 @@ export default function Home() {
 
     const headers = authHeaders();
 
-    const [commitsRes, prsRes, issuesRes] = await Promise.all([
+    const backendIssuesUrl = buildIssueListUrl(process.env.NEXT_PUBLIC_API_BASE_URL, owner, repo);
+
+    const [commitsRes, prsRes, backendIssuesRes] = await Promise.all([
       fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=25`, { headers }),
       fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=30`, { headers }),
-      fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=all&per_page=50`, { headers }),
+      fetch(backendIssuesUrl, { headers }),
     ]);
 
     if (commitsRes.ok) {
@@ -162,22 +165,22 @@ export default function Home() {
       setPrsError(await parseApiError(prsRes));
     }
 
-    if (issuesRes.ok) {
-      const json = await issuesRes.json();
-      setIssuesData(
-        json
-          .filter((issue) => !issue.pull_request)
-          .map((issue) => ({
-            id: issue.id,
-            number: issue.number,
-            title: issue.title,
-            state: issue.state,
-            createdAt: timeAgo(issue.created_at),
-          }))
-      );
+    if (backendIssuesRes.ok) {
+      const issueListPayload = await backendIssuesRes.json();
+      setIssuesData(mapIssueListPayloadToCardIssues(issueListPayload, timeAgo));
     } else {
-      setIssuesData([]);
-      setIssuesError(await parseApiError(issuesRes));
+      const fallbackIssuesRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=all&per_page=50`, {
+        headers,
+      });
+
+      if (fallbackIssuesRes.ok) {
+        const json = await fallbackIssuesRes.json();
+        setIssuesData(mapIssueListPayloadToCardIssues(json, timeAgo));
+        setIssuesError(`Backend issue-list unavailable (${backendIssuesRes.status}); using GitHub issues fallback.`);
+      } else {
+        setIssuesData([]);
+        setIssuesError(await parseApiError(backendIssuesRes));
+      }
     }
 
     setExtrasLoading(false);

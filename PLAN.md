@@ -465,6 +465,29 @@ If a different structure is chosen later, keep the same separation of concerns.
 
 # 8) Wave plan
 
+## Active alignment task — frontend issue-list contract bridge
+
+Goal:
+
+- align the current frontend issue list flow to the backend `GET /api/issues` contract with minimal architecture churn
+
+Scope:
+
+- inspect existing issue-list-related frontend surfaces (route, components, data mapping)
+- document contract mismatches between current UI expectations and backend issue-list payload
+- add a thin compatibility adapter so the existing UI can render backend issue summaries
+
+Validation strategy:
+
+- lint frontend
+- run adapter logic against mocked payload shapes that reflect backend issue-list summaries
+
+Out of scope:
+
+- redesigning frontend architecture
+- implementing analysis/detail UX in this slice
+- broad refactors unrelated to issue-list contract mapping
+
 ## Wave 0 — Foundation and contracts
 
 Goal:
