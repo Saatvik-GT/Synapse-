@@ -512,22 +512,23 @@ def mock_triage() -> dict[str, Any]:
 # ── Markdown comment builder ──────────────────────────────────────────────────
 
 _PRIORITY_ICON: dict[str, str] = {
-    "critical": "🔴",
-    "high": "🟠",
-    "medium": "🟡",
-    "low": "🟢",
+    "critical": "",
+    "high": "",
+    "medium": "",
+    "low": "",
 }
+
 _TYPE_ICON: dict[str, str] = {
-    "bug": "🐛",
-    "feature": "✨",
-    "question": "❓",
-    "docs": "📖",
-    "security": "🔒",
-    "other": "📌",
-    "feature_request": "✨",
-    "documentation": "📖",
-    "support_question": "❓",
-    "spam_or_noise": "🧹",
+    "bug": "",
+    "feature": "",
+    "question": "",
+    "docs": "",
+    "security": "",
+    "other": "",
+    "feature_request": "",
+    "documentation": "",
+    "support_question": "",
+    "spam_or_noise": "",
 }
 
 
@@ -545,11 +546,11 @@ def build_comment(result: dict[str, Any], *, used_api: bool) -> str:
     summary = result.get("summary", "")
     version = result.get("analysis_version", "v0")
 
-    t_icon = _TYPE_ICON.get(ptype, "📌")
-    p_icon = _PRIORITY_ICON.get(p_band, "⚪")
+    t_icon = ""
+    p_icon = ""
 
     lines: list[str] = [
-        "## 🤖 Synapse Triage Report",
+        "## Synapse Triage Report",
         "",
         f"> Mode: **{mode_label}** &nbsp;·&nbsp; version `{version}`",
         "",
@@ -597,7 +598,7 @@ def build_comment(result: dict[str, Any], *, used_api: bool) -> str:
             "Please update the issue to include:",
             "",
         ]
-        lines += [f"- [ ] {item}" for item in missing]
+        lines += [f"- {item}" for item in missing]
         lines += [""]
 
     if summary:
