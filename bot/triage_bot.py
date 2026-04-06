@@ -61,6 +61,8 @@ GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 ISSUE_NUMBER = int(os.environ["ISSUE_NUMBER"])
 ISSUE_TITLE = os.environ.get("ISSUE_TITLE", "") or ""
 ISSUE_BODY = os.environ.get("ISSUE_BODY", "") or ""
+ISSUE_STATE = os.environ.get("ISSUE_STATE", "open") or "open"
+ISSUE_LABELS_RAW = os.environ.get("ISSUE_LABELS", "[]") or "[]"
 REPO_OWNER = os.environ["REPO_OWNER"]
 REPO_NAME = os.environ["REPO_NAME"]
 SYNAPSE_API_URL = os.environ.get("SYNAPSE_API_URL", "").rstrip("/")
@@ -108,11 +110,44 @@ def post_comment(markdown: str) -> None:
 def add_labels(labels: list[str]) -> None:
     if not labels:
         return
+
+    cleaned_labels: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        normalized = str(label).strip()
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned_labels.append(normalized)
+
+    if not cleaned_labels:
+        return
+
     _gh_request(
         "POST",
         f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{ISSUE_NUMBER}/labels",
-        {"labels": labels},
+        {"labels": cleaned_labels},
     )
+
+
+def _parse_issue_labels(raw_labels: str) -> list[str]:
+    raw = (raw_labels or "").strip()
+    if not raw:
+        return []
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+
+    if isinstance(parsed, list):
+        labels = [str(item).strip() for item in parsed if str(item).strip()]
+        return labels
+
+    return [label.strip() for label in raw.split(",") if label.strip()]
 
 
 # ── Backend /api/analyze call ─────────────────────────────────────────────────
@@ -126,6 +161,8 @@ def call_analyze_api() -> dict[str, Any] | None:
     if not SYNAPSE_API_URL:
         return None
 
+    issue_labels = _parse_issue_labels(ISSUE_LABELS_RAW)
+
     payload = {
         "owner": REPO_OWNER,
         "repo": REPO_NAME,
@@ -137,8 +174,8 @@ def call_analyze_api() -> dict[str, Any] | None:
             "number": ISSUE_NUMBER,
             "title": ISSUE_TITLE,
             "body": ISSUE_BODY,
-            "labels": [],
-            "state": "open",
+            "labels": issue_labels,
+            "state": ISSUE_STATE,
         },
     }
     req = urllib.request.Request(

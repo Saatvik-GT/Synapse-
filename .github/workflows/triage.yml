@@ -27,6 +27,8 @@ jobs:
           ISSUE_NUMBER:    ${{ github.event.issue.number }}
           ISSUE_TITLE:     ${{ github.event.issue.title }}
           ISSUE_BODY:      ${{ github.event.issue.body }}
+          ISSUE_STATE:     ${{ github.event.issue.state }}
+          ISSUE_LABELS:    ${{ toJson(github.event.issue.labels.*.name) }}
           REPO_OWNER:      ${{ github.repository_owner }}
           REPO_NAME:       ${{ github.event.repository.name }}
         run: python bot/triage_bot.py
