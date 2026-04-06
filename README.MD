@@ -1,268 +1,328 @@
-# OpenIssue Backend Service (`services/api`)
+# OpenIssue
 
-This folder hosts the FastAPI backend foundation for OpenIssue.
+OpenIssue is a repo-first GitHub issue triage assistant for maintainers.
 
-## What exists in this branch
+It ingests issues from a repository, runs explainable triage analysis, and surfaces:
+- predicted issue type
+- suggested labels
+- likely duplicate candidates
+- priority score + priority band
+- missing-information hints (what reporters should add)
 
-- app bootstrap (`app/main.py`)
-- explicit settings loading via `pydantic-settings` (`app/core/settings.py`)
-- API router wiring (`app/api/router.py`)
-- health route (`GET /api/health`)
-- contract-first module boundaries for:
-  - `app/schemas`
-  - `app/core`
-  - `app/github`
-  - `app/embeddings`
-  - `app/vectorstore`
-  - `app/triage`
-- local vector indexing/query route support:
+This branch includes a real integrated frontend + backend flow for issue analysis, **plus a GitHub Actions bot that auto-triages new issues directly inside GitHub**. The UI still has some legacy `Synapse` naming, but the product behavior is OpenIssue triage.
+
+## What is integrated right now
+
+- Frontend (Next.js) repository viewer with issue selection and an in-page `AnalyzePanel`
+- Backend (FastAPI) triage endpoints:
+  - `GET /api/issues`
+  - `POST /api/similar-issues`
+  - `POST /api/classification`
+  - `POST /api/analyze`
   - `POST /api/vectors/index`
   - `POST /api/vectors/query`
-  - `POST /api/similar-issues`
-- classification + label suggestion route support:
-  - `POST /api/classification`
-- unified analyze route support:
-  - `POST /api/analyze`
-- explainable Wave 3 classification + label suggestion primitives:
-  - `app/triage/classification.py`
-  - `ClassificationLabelingService` in `app/triage/service.py`
+- Local, open-source embedding + vector setup:
+  - `sentence-transformers/all-MiniLM-L6-v2`
+  - SQLite-backed local vector store
+- **GitHub Actions triage bot** (`bot/triage_bot.py` + `.github/workflows/triage.yml`):
+  - Triggers automatically on `issues: [opened]`
+  - Posts a structured markdown triage report as a comment on the new issue
+  - Auto-applies suggested labels via the GitHub REST API
+  - Runs in **API mode** when `SYNAPSE_API_URL` is set (calls `POST /api/analyze`)
+  - Falls back to **keyword mock mode** (no backend required) when the secret is absent or the request fails
+  - Zero external dependencies in mock mode — runs entirely inside the GitHub Actions runner
 
-## Vector indexing layer
+## GitHub Actions Bot
 
-This branch includes a local, swappable vector indexing path for normalized issues:
+### How it works
 
-- embedding provider boundary (`app/embeddings/contracts.py`)
-- canonical semantic embedding implementation (`minilm-local` via `sentence-transformers/all-MiniLM-L6-v2`)
-- vector store boundary (`app/vectorstore/contracts.py`)
-- local persistent SQLite vector store (`sqlite-local`)
-- indexing/query orchestration service (`app/vectorindex/service.py`)
+When a new issue is opened on any repository where this workflow is installed, the bot:
 
-The vector layer is intentionally local/free-first and replaceable for later branches.
+1. Reads the issue title, body, labels, and state from the GitHub event payload
+2. If `SYNAPSE_API_URL` is configured, calls `POST {SYNAPSE_API_URL}/api/analyze` with a `NormalizedIssueInput`-shaped payload
+3. If the API is unavailable or the secret is absent, falls back to local keyword-based mock triage
+4. Posts a structured markdown comment with the triage report on the issue
+5. Applies the suggested labels to the issue via the GitHub REST API (non-fatal if labels do not exist in the repo yet)
 
-### Reindex/invalidation behavior
+### Bot modes
 
-- Each stored vector row is tagged with an `embedding_signature` (provider + model + dimension).
-- Queries only search rows matching the active runtime signature.
-- On indexing, if a repository already has rows from a different signature (for example older hashing vectors), the repository slice is cleared before MiniLM upsert continues.
-- This prevents mixed placeholder/semantic indexes from silently masquerading as one index.
+| Mode | When active | Dependencies |
+|---|---|---|
+| **API mode** | `SYNAPSE_API_URL` secret is set and backend is reachable | Deployed OpenIssue backend |
+| **Keyword mock mode** | Secret absent or API request fails | None — pure Python stdlib |
 
-Embedding providers now support open-source local inference with:
+### Triage report structure
 
-- primary: `sentence-transformers/all-MiniLM-L6-v2`
-- fallback: `BAAI/bge-small-en-v1.5`
+The bot posts a markdown comment with the following sections:
 
-## Quick start
+- **Classification** — predicted issue type, confidence percentage, duplicate likelihood
+- **Priority reasoning** — plain-language explanation of the priority score
+- **Suggested Labels** — labels applied directly to the issue
+- **Possible Duplicates** — similar issues by number and similarity percentage (API mode only)
+- **Missing Information** — checklist of what the reporter should add (e.g. reproduction steps, environment info)
+- **Summary** — one-line explanation of the overall triage result
 
-1. Create a virtual environment.
-2. Install dependencies:
+### Bot setup
+
+#### 1. Add the workflow secret (optional but recommended)
+
+In your repository go to **Settings → Secrets and variables → Actions** and add:
+
+| Secret | Value |
+|---|---|
+| `SYNAPSE_API_URL` | Your deployed backend URL, e.g. `https://your-api.example.com` |
+
+If you skip this step the bot still runs in keyword mock mode.
+
+#### 2. The workflow file
+
+The workflow is already present at `.github/workflows/triage.yml` and triggers on every new issue automatically. No further configuration is required beyond the optional secret above.
+
+#### 3. Required permissions
+
+The workflow requests `issues: write` permission, which allows it to post comments and apply labels. This is declared in the workflow file and requires no manual configuration.
+
+### Request body sent to `/api/analyze`
+
+```json
+{
+  "owner": "<repo owner>",
+  "repo": "<repo name>",
+  "token": "<GITHUB_TOKEN passed through>",
+  "k": 5,
+  "state": "all",
+  "include_pull_requests": false,
+  "target_issue": {
+    "number": 42,
+    "title": "Issue title",
+    "body": "Issue body",
+    "labels": [],
+    "state": "open"
+  }
+}
+```
+
+### Expected response shape (`TriageResult`)
+
+The bot normalises both the canonical nested `AnalyzeResponse` and a legacy flat triage payload. Required fields:
+
+```json
+{
+  "predicted_type": "bug",
+  "type_confidence": 0.91,
+  "priority_score": 7,
+  "priority_band": "high",
+  "priority_reasons": ["..."],
+  "duplicate_confidence": 0.0,
+  "similar_issues": [],
+  "suggested_labels": ["bug", "needs-repro"],
+  "missing_information": ["Steps to reproduce", "Version / environment info"],
+  "summary": "...",
+  "analysis_version": "w4-analyze-v1"
+}
+```
+
+### Bot file locations
+
+| File | Purpose |
+|---|---|
+| `bot/triage_bot.py` | Main bot script — GitHub API calls, mock triage, markdown rendering |
+| `.github/workflows/triage.yml` | GitHub Actions workflow definition |
+
+---
+
+## Architecture (current repo state)
+
+### Frontend (`frontend/`)
+- Next.js app (JavaScript + Tailwind)
+- Main page: `frontend/pages/index.js`
+- Analysis UI is integrated into the existing homepage shell via `frontend/components/AnalyzePanel.js`
+
+### Backend (`services/api/`)
+- FastAPI service with route wiring in `services/api/app/api/router.py`
+- GitHub ingestion client in `services/api/app/github/client.py`
+- Analysis orchestration in `services/api/app/services/analyze.py`
+- Similarity reranking in `services/api/app/services/similar_issues.py`
+- Classification + label heuristics in `services/api/app/services/classification.py`
+
+### Bot (`bot/`)
+- Standalone Python script with no third-party dependencies
+- Communicates with the GitHub REST API using only the Python stdlib (`urllib.request`)
+- Communicates with the OpenIssue backend over HTTP when `SYNAPSE_API_URL` is set
+- Normalises both canonical `AnalyzeResponse` (nested sections) and legacy flat triage payloads
+
+### Data/control flow
+1. Frontend fetches repo metadata, owner, commits, and PRs directly from GitHub.
+2. Frontend fetches normalized issues from backend `GET /api/issues`.
+3. User selects an issue in `IssuesCard`.
+4. Frontend calls backend `POST /api/analyze` with repo + `issue_number`.
+5. Backend analyze service composes:
+   - semantic retrieval + reranking (`similar_issues`)
+   - lexical-first classification + label suggestions (`classification`)
+   - deterministic priority + missing-info synthesis (`analyze` service)
+6. Frontend maps the canonical analyze payload and renders sections in `AnalyzePanel`.
+7. *(Bot flow)* GitHub Actions triggers on new issue → bot calls the same `POST /api/analyze` endpoint → posts triage comment + applies labels directly on GitHub.
+
+## Triage pipeline details
+
+### 1) Ingestion and normalization
+- GitHub issues are fetched via REST API.
+- Pull requests are excluded by default unless explicitly requested.
+- Issues are normalized into stable fields and canonical text (`title + body`).
+
+### 2) Retrieval and reranking
+- MiniLM embeddings are used to index/query local vectors.
+- Top candidates are retrieved semantically, then reranked using explainable signals:
+  - title/body token overlap
+  - error/exception token overlap
+  - file/module/version overlap
+  - label overlap
+  - state/recency adjustments
+
+### 3) Classification and labels
+- Lexical-first heuristics predict issue type:
+  - `bug`, `feature_request`, `documentation`, `support_question`, `spam_or_noise`
+- Neighbor evidence can influence label hints, while type remains lexical-first for stability.
+
+### 4) Priority and missing information
+- Priority score is derived from explicit signals (severity/failure/duplicate density/type cues).
+- Missing-info detection checks for gaps like reproduction steps, expected vs actual behavior, logs, and environment/version details.
+
+### 5) Explainable output
+- `POST /api/analyze` returns a canonical nested response with reasons in each section.
+- Frontend displays these reasons directly instead of only showing opaque scores.
+- The bot renders the same reasons as plain markdown in the GitHub issue comment.
+
+## Honest product notes
+
+- The analytics/suggestions experience is integrated into the existing homepage (not a separate app/page).
+- Repo metadata, commits, and PRs still come directly from GitHub in the frontend.
+- Issues + analyze flow are backend-driven.
+- If backend issue fetch fails, frontend falls back to direct GitHub issue fetch.
+- GitHub token is currently stored in browser `localStorage` for demo convenience.
+- The bot uses the `GITHUB_TOKEN` automatically provided by GitHub Actions — no extra token setup is needed for posting comments and applying labels.
+
+## Prerequisites
+
+- Node.js 18+
+- npm 9+
+- Python 3.10+
+
+## Setup
+
+### 1) Backend setup (`services/api`)
 
 ```bash
+cd services/api
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-3. Copy env template and adjust if needed:
-
-```bash
 cp .env.example .env
-```
-
-4. Start the service:
-
-```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-5. Check health route:
+Backend health check:
 
 ```bash
 curl http://127.0.0.1:8000/api/health
 ```
 
-Expected response shape:
+### 2) Frontend setup (`frontend`)
 
-```json
-{
-  "status": "ok",
-  "service": "OpenIssue API",
-  "version": "0.1.0",
-  "environment": "development"
-}
-```
-
-## Index issues and query similar candidates
-
-Index normalized issues from a repository:
+Create `frontend/.env.local`:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/vectors/index \
-  -H "Content-Type: application/json" \
-  -d '{
-    "owner": "vercel",
-    "repo": "next.js",
-    "state": "open",
-    "include_pull_requests": false
-  }'
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-Query top-k similar issue candidates:
+Then run:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/vectors/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query_text": "build fails on arm64",
-    "k": 5,
-    "owner": "vercel",
-    "repo": "next.js"
-  }'
+cd frontend
+npm install
+npm run dev
 ```
 
-The index response includes:
+Open `http://127.0.0.1:3000`.
 
-- `embedding_provider`
-- `embedding_model`
-- `embedding_signature`
-- `reindex_required`
-- `cleared_count`
+### 3) Bot setup
 
-These fields indicate whether stale rows were invalidated before indexing.
+No local setup required. The bot runs entirely inside GitHub Actions. See the **GitHub Actions Bot** section above for configuration details.
 
-## Classify issue type and suggest labels
+## Environment variables
 
-Classify one issue and return explainable type/label reasoning:
+### Backend (`services/api/.env`)
+
+Use `services/api/.env.example` as the base.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `OPENISSUE_API_NAME` | no | `OpenIssue API` | FastAPI title |
+| `OPENISSUE_API_VERSION` | no | `0.1.0` | API version |
+| `OPENISSUE_API_ENV` | no | `development` | Environment label |
+| `OPENISSUE_API_HOST` | no | `0.0.0.0` | Uvicorn host |
+| `OPENISSUE_API_PORT` | no | `8000` | Uvicorn port |
+| `OPENISSUE_API_LOG_LEVEL` | no | `info` | Log level |
+| `OPENISSUE_API_PREFIX` | no | `/api` | API route prefix |
+| `OPENISSUE_GITHUB_API_BASE_URL` | no | `https://api.github.com` | GitHub API base URL |
+| `OPENISSUE_GITHUB_TIMEOUT_SECONDS` | no | `20.0` | GitHub request timeout |
+| `OPENISSUE_GITHUB_TOKEN` | no | _empty_ | Optional GitHub token |
+| `OPENISSUE_EMBEDDING_PROVIDER` | no | `minilm-local` | Embedding provider selector |
+| `OPENISSUE_EMBEDDING_MODEL_NAME` | no | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
+| `OPENISSUE_EMBEDDING_VECTOR_DIM` | no | `256` | Vector dimension for hashing provider / signature |
+| `OPENISSUE_VECTOR_STORE_PROVIDER` | no | `sqlite-local` | Vector store provider |
+| `OPENISSUE_VECTOR_STORE_PATH` | no | `.openissue/openissue_vectors.db` | SQLite vector DB path |
+| `OPENISSUE_CORS_ALLOWED_ORIGINS` | no | JSON list of localhost origins | CORS allowlist |
+
+### Frontend (`frontend/.env.local`)
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | recommended | _empty_ | Backend base URL; when empty, frontend calls same-origin `/api/*` |
+
+### GitHub Actions bot (repository secrets)
+
+| Secret | Required | Purpose |
+|---|---|---|
+| `SYNAPSE_API_URL` | no | Deployed backend URL; when absent the bot runs in keyword mock mode |
+
+## Demo path (for judges/reviewers)
+
+### Web app
+
+1. Start backend and frontend using the setup steps above.
+2. Open the app and press `Ctrl+K`.
+3. Search a repo like `vercel/next.js` or `facebook/react`.
+4. (Optional) Paste a GitHub token in the left sidebar to reduce rate-limit failures.
+5. Wait for cards to load; open/closed issues appear in `IssuesCard`.
+6. Click any issue to trigger analysis.
+7. Review the integrated `AnalyzePanel` sections:
+   - predicted type
+   - suggested labels
+   - priority
+   - duplicate candidates
+   - missing information
+   - explanation
+
+### GitHub Actions bot
+
+1. Open any issue in this repository (or a fork with the workflow installed).
+2. Within seconds, the `github-actions` bot posts a **Synapse Triage Report** comment.
+3. Suggested labels are automatically applied to the issue.
+4. If `SYNAPSE_API_URL` is configured, the report includes live duplicate candidates from the backend.
+
+## Useful validation commands
+
+From `frontend/`:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/classification \
-  -H "Content-Type: application/json" \
-  -d '{
-    "owner": "vercel",
-    "repo": "next.js",
-    "k": 5,
-    "target_issue": {
-      "title": "Build crashes on Node 22",
-      "body": "Steps to reproduce: run next build on Node 22. Actual behavior: process exits with error.",
-      "labels": []
-    }
-  }'
+npm run test:contract
+npm run lint
+npm run build
 ```
 
-Response includes a stable `predicted_type` in:
-
-- `bug`
-- `feature_request`
-- `documentation`
-- `support_question`
-- `spam_or_noise`
-
-Neighbor evidence note:
-
-- retrieval evidence is used for label hints only
-- type classification stays lexical-first for stability and explainability
-
-## Analyze issue (Wave 4 integration)
-
-`POST /api/analyze` now returns the canonical analyze payload used by frontend contract helpers.
-
-Example request:
+From `services/api/`:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-    "owner": "vercel",
-    "repo": "next.js",
-    "k": 5,
-    "target_issue": {
-      "title": "Build crashes on Node 22",
-      "body": "Steps to reproduce: run next build on Node 22. Actual behavior: process exits with error.",
-      "labels": []
-    }
-  }'
+python3 -m compileall app
 ```
-
-Response shape uses canonical nested sections:
-
-- `predicted_type`
-- `suggested_labels`
-- `duplicate_candidates`
-- `priority`
-- `missing_information`
-- `explanation`
-
-This route does not introduce an alternate envelope; it returns `AnalyzeResponse` at the root.
-
-## Issue list query compatibility
-
-`GET /api/issues` accepts either:
-
-- `owner` + `repo` query params
-- `repo=owner/repo` (frontend-compatible shorthand)
-
-If both are omitted or malformed, the endpoint returns HTTP `422` with a clear contract error message.
-
-## Duplicate candidate reranking (Wave 3)
-
-`POST /api/similar-issues` now performs a two-stage duplicate retrieval flow:
-
-1. semantic candidate generation from MiniLM cosine similarity in the vector store
-2. explicit reranking with overlap-based heuristics and explainable reasons
-
-Rerank signals include:
-
-- title token overlap
-- body keyword overlap
-- exception/error token overlap
-- file/module token overlap
-- version marker overlap
-- label overlap
-- semantic similarity from MiniLM retrieval
-- state and recency adjustments
-
-Each candidate now includes:
-
-- `similarity_score` (raw semantic cosine from vector retrieval)
-- `rerank_score` (weighted lexical/metadata rerank score)
-- `final_score` (rerank score after state/recency adjustments)
-- `duplicate_confidence` (bounded confidence used for duplicate cards)
-- `reasons` (structured signal explanations with strengths)
-
-The response also includes top-level `duplicate_confidence` and
-`calibration_notes` to clarify that MiniLM score ranges can vary by repository
-and no hard duplicate threshold is enforced yet.
-
-Design notes:
-
-- uses weighted lexical and issue-structure heuristics (no proprietary model)
-- optionally applies conservative neighbor evidence from Wave 2 similar candidates
-- keeps output stable with `predicted_type` + `suggested_labels`
-- returns UI-friendly reasoning fields (`type_reasoning`, `label_reasoning`, `neighbor_evidence_*`)
-
-Neighbor evidence is intentionally ignored when candidate confidence is weak, to avoid noisy label transfer.
-
-## Unified analyze response
-
-Run end-to-end issue analysis in one request:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-    "owner": "psf",
-    "repo": "requests",
-    "k": 5,
-    "target_issue": {
-      "title": "Requests crashes with proxy auth header",
-      "body": "Steps to reproduce: configure proxy auth and call requests.get. Actual behavior: raises ProxyError and stack trace.",
-      "labels": []
-    }
-  }'
-```
-
-Response uses canonical `AnalyzeResponse` sections:
-
-- `predicted_type`
-- `suggested_labels`
-- `duplicate_candidates`
-- `priority`
-- `missing_information`
-- `explanation`
