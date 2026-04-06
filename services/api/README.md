@@ -18,6 +18,7 @@ This folder hosts the FastAPI backend foundation for OpenIssue.
 - local vector indexing/query route support:
   - `POST /api/vectors/index`
   - `POST /api/vectors/query`
+  - `POST /api/similar-issues`
 
 ## Vector indexing layer
 
@@ -118,3 +119,33 @@ The index response includes:
 - `cleared_count`
 
 These fields indicate whether stale rows were invalidated before indexing.
+
+## Duplicate candidate reranking (Wave 3)
+
+`POST /api/similar-issues` now performs a two-stage duplicate retrieval flow:
+
+1. semantic candidate generation from MiniLM cosine similarity in the vector store
+2. explicit reranking with overlap-based heuristics and explainable reasons
+
+Rerank signals include:
+
+- title token overlap
+- body keyword overlap
+- exception/error token overlap
+- file/module token overlap
+- version marker overlap
+- label overlap
+- semantic similarity from MiniLM retrieval
+- state and recency adjustments
+
+Each candidate now includes:
+
+- `similarity_score` (raw semantic cosine from vector retrieval)
+- `rerank_score` (weighted lexical/metadata rerank score)
+- `final_score` (rerank score after state/recency adjustments)
+- `duplicate_confidence` (bounded confidence used for duplicate cards)
+- `reasons` (structured signal explanations with strengths)
+
+The response also includes top-level `duplicate_confidence` and
+`calibration_notes` to clarify that MiniLM score ranges can vary by repository
+and no hard duplicate threshold is enforced yet.
