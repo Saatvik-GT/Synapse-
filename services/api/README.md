@@ -21,6 +21,9 @@ This folder hosts the FastAPI backend foundation for OpenIssue.
   - `POST /api/similar-issues`
 - classification + label suggestion route support:
   - `POST /api/classification`
+- explainable Wave 3 classification + label suggestion primitives:
+  - `app/triage/classification.py`
+  - `ClassificationLabelingService` in `app/triage/service.py`
 
 ## Vector indexing layer
 
@@ -183,3 +186,12 @@ Each candidate now includes:
 The response also includes top-level `duplicate_confidence` and
 `calibration_notes` to clarify that MiniLM score ranges can vary by repository
 and no hard duplicate threshold is enforced yet.
+
+Design notes:
+
+- uses weighted lexical and issue-structure heuristics (no proprietary model)
+- optionally applies conservative neighbor evidence from Wave 2 similar candidates
+- keeps output stable with `predicted_type` + `suggested_labels`
+- returns UI-friendly reasoning fields (`type_reasoning`, `label_reasoning`, `neighbor_evidence_*`)
+
+Neighbor evidence is intentionally ignored when candidate confidence is weak, to avoid noisy label transfer.
