@@ -51,6 +51,56 @@ Explicitly out of scope:
 - frontend UI implementation for classification output
 - proprietary or paid model dependencies
 
+## Execution Update (2026-04-06): Wave 3 analyze contract + frontend UI alignment
+
+Current goal:
+
+- freeze a unified analyze response contract from real Wave 2/3 outputs and align analytics/suggestions UI integration with the current homepage design system
+
+Exact scope:
+
+- inspect current frontend shell (homepage, shared cards, navigation, spacing, typography, color tokens, state treatments)
+- inspect current backend duplicate/classification/priority-related outputs and schema boundaries
+- define a canonical analyze response shape that explicitly covers predicted type, suggested labels, duplicate candidates, priority, missing information, and explainability reasons
+- add thin alignment artifacts (contract schema/docs/frontend adapter helpers/tests) so Wave 4 can integrate without schema ambiguity
+- document UI mapping and loading/empty/error expectations for each analyze section
+
+Files/components likely affected:
+
+- `services/api/app/schemas/analyze.py` (new canonical analyze response schema)
+- `frontend/lib/analyzeContract.js` (frontend-safe mapper helpers)
+- `frontend/tests/analyze-contract.test.mjs` (contract mapping/state tests)
+- `frontend/docs/analyze-contract-ui-alignment.md` (design + contract + UI section mapping)
+- `frontend/package.json` (contract test script coverage)
+- `PLAN.md` (this execution update)
+
+Sequencing:
+
+1. inspect frontend surfaces and backend wave outputs/contracts
+2. freeze unified analyze schema with explicit nested sections
+3. add frontend helper mapping into section-oriented view model
+4. add contract tests for root/nested envelopes and fallback behaviors
+5. validate with targeted contract test command and report open mismatches
+
+Validation strategy:
+
+- run `npm run test:contract` in `frontend`
+- verify analyze mapping handles required Wave 3 sections and state extraction
+- verify contract doc and schema stay consistent
+
+Risks / open questions:
+
+- no backend `/analyze` route is wired yet, so runtime integration remains staged behind contract + mapper alignment
+- classification reasons are available in triage interface return tuple but are not currently represented in existing `TriageResult` fields, requiring explicit contract reconciliation
+- frontend currently has only homepage route and no analysis panel; Wave 4 must introduce the surface while preserving existing shell language
+
+Explicitly out of scope:
+
+- fully building analytics/suggestions page UI
+- homepage redesign or broad frontend IA refactor
+- replacing team-owned visual language
+- implementing full triage orchestration logic
+
 ## Execution Update (2026-04-06): Wave 2 semantic embedding correction (MiniLM)
 
 Current goal:
