@@ -1,14 +1,14 @@
 import React from 'react';
 import { BookMarked, Star, Users, Bell, Settings, TrendingUp, GraduationCap, Pin } from 'lucide-react';
 
-export default function Sidebar({ userName }) {
+export default function Sidebar({ activeTab, setActiveTab }) {
   const menuItems = [
-    { icon: BookMarked, label: 'Repositories', href: '#' },
-    { icon: Star, label: 'Starred', href: '#' },
-    { icon: Users, label: 'Followers', href: '#' },
-    { icon: Bell, label: 'Notifications', href: '#' },
-    { icon: Settings, label: 'Settings', href: '#' },
-  ];
+  { icon: BookMarked, id: 'dashboard', label: 'Dashboard' },
+  { icon: Star, id: 'issues', label: 'Issues' },
+  { icon: Users, id: 'priority', label: 'Priority' },
+  { icon: Bell, id: 'insights', label: 'Insights' },
+  { icon: Settings, id: 'settings', label: 'Settings' },
+];
 
   const quickFilters = [
     { icon: TrendingUp, label: 'Trending' },
@@ -24,14 +24,14 @@ export default function Sidebar({ userName }) {
           {menuItems.map((item, index) => {
             const Icon = item.icon;
             return (
-              <a
-                key={index}
-                href={item.href}
-                className="flex items-center gap-3 px-4 py-3 rounded-lg text-github-text hover:bg-github-border hover:text-white transition"
-              >
-                <Icon size={15} className="flex-shrink-0" />
-                <span className="font-medium text-sm">{item.label}</span>
-              </a>
+              <button
+  key={index}
+  onClick={() => setActiveTab(item.id)}
+  className="flex items-center gap-3 px-4 py-3 rounded-lg text-github-text hover:bg-github-border hover:text-white transition w-full text-left"
+>
+  <Icon size={15} className="flex-shrink-0" />
+  <span className="font-medium text-sm">{item.label}</span>
+</button>
             );
           })}
         </nav>
