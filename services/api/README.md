@@ -17,6 +17,11 @@ This folder hosts the FastAPI backend foundation for OpenIssue.
   - `app/vectorstore`
   - `app/triage`
 
+Embedding providers now support open-source local inference with:
+
+- primary: `sentence-transformers/all-MiniLM-L6-v2`
+- fallback: `BAAI/bge-small-en-v1.5`
+
 Some modules still intentionally expose `NotImplementedError` placeholders where Wave 2/3 work is pending.
 
 ## Quick start
@@ -71,17 +76,16 @@ This endpoint runs a real retrieval path:
 
 Canonical embedding path:
 
-- default provider: `OPENISSUE_EMBEDDING_PROVIDER=minilm`
+- default provider key: `OPENISSUE_EMBEDDINGS_PROVIDER=minilm-l6`
 - model: `sentence-transformers/all-MiniLM-L6-v2`
 
-Explicit non-canonical fallback:
+Fallback path (explicit non-canonical for this endpoint):
 
-- `OPENISSUE_EMBEDDING_PROVIDER=hashing`
-- only for local/debug fallback when MiniLM is unavailable
+- `OPENISSUE_EMBEDDINGS_PROVIDER=bge-small`
 
 Response includes:
 
-- `embedding_provider` (actual provider/model used)
+- `embedding_provider` (provider key used by the request)
 - `vector_index` (vector index implementation identity)
 - `embedding_path` (`canonical-minilm` or `non-canonical-fallback`)
 
@@ -125,3 +129,29 @@ Candidate responses include stable fields intended for Wave 3 reranking:
 - `state`
 - `labels`
 - `metadata` (source, timestamps, comment count, author, raw metadata)
+
+## Embeddings configuration
+
+Use `.env` to select providers:
+
+```env
+OPENISSUE_EMBEDDINGS_PROVIDER=minilm-l6
+OPENISSUE_EMBEDDINGS_FALLBACK_PROVIDER=bge-small
+```
+
+Provider keys:
+
+- `minilm-l6` -> `sentence-transformers/all-MiniLM-L6-v2`
+- `bge-small` -> `BAAI/bge-small-en-v1.5`
+
+Provider behavior:
+
+- embeddings are L2-normalized (`normalize_embeddings=True`)
+- tokenizer sequence length is capped at 256 tokens (`max_seq_length=256`)
+- MiniLM output dimension is 384 vectors per text
+
+## Runtime assumptions
+
+- first provider load downloads model files from Hugging Face and caches locally
+- local dev requires Python environment that can install `sentence-transformers` and its torch dependency
+- embedding calls are synchronous and CPU-compatible; GPU acceleration is optional

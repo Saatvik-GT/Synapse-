@@ -151,7 +151,7 @@ class SimilarIssuesService:
             vector_index=self.vector_store.index_name(),
             embedding_path=(
                 "canonical-minilm"
-                if "all-MiniLM-L6-v2" in self.embedding_provider.provider_name()
+                if self.embedding_provider.provider_name() == "minilm-l6"
                 else "non-canonical-fallback"
             ),
             retrieved_at=datetime.now(timezone.utc),
