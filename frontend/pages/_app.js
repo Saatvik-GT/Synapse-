@@ -7,13 +7,8 @@ function MyApp({ Component, pageProps }) {
   const [activeTab, setActiveTab] = useState("dashboard");
 
   return (
-    <div className="flex">
+    <div>
       
-      {/* Sidebar */}
-      <Sidebar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-      />
 
       {/* Main Content */}
       <div className="flex-1">
