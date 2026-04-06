@@ -17,6 +17,7 @@ export default function Sidebar({ userName }) {
   ];
 
   return (
+
     <aside className="w-64">
       <div className="bg-github-bg border border-github-border rounded-lg p-6 sticky top-20">
         <nav className="space-y-1">
