@@ -805,3 +805,55 @@ Not for current implementation unless explicitly prioritized:
 - better issue-template parsing
 - auth polish
 - hosted deployment hardening
+
+---
+
+# 15) Active execution update (Wave 1: GitHub ingestion)
+
+## Current goal
+
+Implement the real backend issue-ingestion path for `feat/w1-github-ingestion` by fetching repository issues from GitHub, normalizing to a stable internal contract, and exposing a list endpoint.
+
+## Exact scope
+
+- build a GitHub API client for issue listing
+- normalize GitHub issue payloads into `NormalizedIssue`
+- build canonical text from title + body
+- filter pull requests from the issues feed by default
+- expose `GET /api/issues` to return normalized issues for a repo
+
+## Files/components likely affected
+
+- `services/api/app/main.py`
+- `services/api/app/github/client.py`
+- `services/api/app/github/normalization.py`
+- `services/api/app/routes/issues.py`
+- `services/api/app/schemas/issues.py`
+- backend dependency/config docs as needed
+
+## Sequencing
+
+1. scaffold backend API structure and schemas
+2. implement GitHub API client with robust error handling
+3. implement normalization and PR filtering behavior
+4. expose `GET /api/issues` using normalized output
+5. run backend and verify endpoint on a sample public repo
+
+## Validation strategy
+
+- run FastAPI server locally
+- call `GET /api/issues` for a real public repository
+- verify canonical text shape and required metadata fields
+- verify pull requests in the issues response are filtered/handled correctly
+
+## Risks / open questions
+
+- GitHub rate limiting for unauthenticated requests
+- pagination limits (single page vs multi-page fetch) for large repositories
+- choosing a stable URL representation while preserving raw metadata
+
+## Explicitly out of scope
+
+- full auth system or OAuth flows
+- embeddings, duplicate detection, classification, or priority logic
+- frontend analytics and non-triage dashboards
