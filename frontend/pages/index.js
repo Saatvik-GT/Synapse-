@@ -139,10 +139,10 @@ export default function Home() {
       issuesOpenRes, issuesClosedRes,
     ] = await Promise.all([
       fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=30`, { headers }),
-      fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=30`, { headers }),
-      fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=closed&per_page=30`, { headers }),
-      fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=30`, { headers }),
-      fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=closed&per_page=30`, { headers }),
+      fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=50`, { headers }),
+      fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=closed&per_page=50`, { headers }),
+      fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100`, { headers }),
+      fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=closed&per_page=100`, { headers }),
     ]);
 
     // Commits
