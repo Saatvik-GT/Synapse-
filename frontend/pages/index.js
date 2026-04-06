@@ -278,7 +278,7 @@ export default function Home() {
               </div>
 
               {/* Content Row: Commits | PRs | Issues — fills remaining height */}
-              <div className="grid grid-cols-3 gap-5 flex-1 min-h-0">
+              <div className="grid grid-cols-3 gap-5 flex-1 min-h-0 overflow-hidden">
                 <ActivitiesCard commits={commitsData} />
                 <PullRequestsCard pullRequests={pullRequestsData} />
                 <IssuesCard issues={issuesData} />
