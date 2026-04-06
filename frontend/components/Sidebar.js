@@ -17,7 +17,7 @@ export default function Sidebar({ userName }) {
   ];
 
   return (
-    <aside className="hidden lg:block w-64">
+    <aside className="w-64">
       <div className="bg-github-bg border border-github-border rounded-lg p-6 sticky top-20">
         <nav className="space-y-1">
           {menuItems.map((item, index) => {
