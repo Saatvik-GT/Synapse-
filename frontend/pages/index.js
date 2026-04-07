@@ -25,6 +25,7 @@ export default function Home() {
   const [prsError, setPrsError] = useState(null);
   const [issuesError, setIssuesError] = useState(null);
   const [extrasLoading, setExtrasLoading] = useState(false);
+  const [issuesLoading, setIssuesLoading] = useState(false);
   const [selectedIssue, setSelectedIssue] = useState(null);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
@@ -97,6 +98,7 @@ export default function Home() {
     setCommitsError(null);
     setPrsError(null);
     setIssuesError(null);
+    setIssuesLoading(false);
     try {
       const parsed = parseRepoLink(input);
       if (!parsed) throw new Error('Invalid format. Use "owner/repo" or full GitHub URL');
@@ -138,6 +140,7 @@ export default function Home() {
 
   const fetchRepoExtras = async (owner, repo) => {
     setExtrasLoading(true);
+    setIssuesLoading(true);
     setCommitsError(null);
     setPrsError(null);
     setIssuesError(null);
@@ -220,6 +223,7 @@ export default function Home() {
         setIssuesError(await parseApiError(backendIssuesRes));
       }
     }
+    setIssuesLoading(false);
   };
 
   const fetchAnalyzeData = async (issue, owner, repo) => {
@@ -351,7 +355,7 @@ export default function Home() {
                 <IssuesCard
                   issues={issuesData}
                   error={issuesError}
-                  loading={extrasLoading}
+                  loading={issuesLoading}
                   onIssueSelect={handleIssueSelect}
                   selectedIssueId={selectedIssue?.id}
                 />
