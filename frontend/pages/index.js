@@ -127,7 +127,8 @@ export default function Home() {
       setRepoData(repoJson);
       setRepoOwner(ownerJson);
 
-      await fetchRepoExtras(owner, repo);
+      // Don't await — render the page immediately, extras load in background
+      fetchRepoExtras(owner, repo);
     } catch (err) {
       setError(err.message);
     } finally {
