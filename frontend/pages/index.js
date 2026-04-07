@@ -31,6 +31,12 @@ export default function Home() {
   const [analyzeError, setAnalyzeError] = useState(null);
   const [analyzeData, setAnalyzeData] = useState(null);
 
+  // Warm up backend on page load so it's ready when user clicks an issue
+  useEffect(() => {
+    const base = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/$/, '');
+    if (base) fetch(`${base}/api/health`).catch(() => {});
+  }, []);
+
   // Ctrl+K global shortcut
   useEffect(() => {
     const handler = (e) => {
@@ -241,7 +247,7 @@ export default function Home() {
       const token = localStorage.getItem('gh_token') || null;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const timeoutId = setTimeout(() => controller.abort(), 90000);
       const response = await fetch(analyzeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
