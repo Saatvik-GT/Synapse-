@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -11,8 +13,23 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.router import build_api_router
+from app.core.dependencies import get_analyze_service
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-load ML models so the first /api/analyze request isn't slow
+    try:
+        logger.info("Pre-warming analyze service and embedding model...")
+        get_analyze_service()
+        logger.info("Analyze service ready.")
+    except Exception as exc:
+        logger.warning("Could not pre-warm analyze service: %s", exc)
+    yield
 
 
 def create_app() -> FastAPI:
@@ -22,6 +39,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.api_name,
         version=settings.api_version,
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,
