@@ -143,18 +143,12 @@ export default function Home() {
     setIssuesError(null);
 
     const headers = authHeaders();
-    const backendIssuesUrl = buildIssueListUrl(process.env.NEXT_PUBLIC_API_BASE_URL, owner, repo);
 
-    const [
-      commitsRes,
-      prsOpenRes,
-      prsClosedRes,
-      backendIssuesRes,
-    ] = await Promise.all([
+    // Fetch GitHub data (commits + PRs) immediately — don't wait for slow backend
+    const [commitsRes, prsOpenRes, prsClosedRes] = await Promise.all([
       fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=30`, { headers }),
       fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=50`, { headers }),
       fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=closed&per_page=50`, { headers }),
-      fetch(backendIssuesUrl, { headers }),
     ]);
 
     // Commits
@@ -194,12 +188,22 @@ export default function Home() {
       setPrsError(await parseApiError(prsOpenRes));
     }
 
+    setExtrasLoading(false);
+
+    // Issues — try backend first (may be slow on cold start), fall back to GitHub API
+    const backendIssuesUrl = buildIssueListUrl(process.env.NEXT_PUBLIC_API_BASE_URL, owner, repo);
+    let backendIssuesRes;
+    try {
+      backendIssuesRes = await fetch(backendIssuesUrl, { headers });
+    } catch {
+      backendIssuesRes = { ok: false, status: 0, json: async () => ({}) };
+    }
+
     if (backendIssuesRes.ok) {
       const issueListPayload = await backendIssuesRes.json();
       setIssuesData(mapIssueListPayloadToCardIssues(issueListPayload, timeAgo));
     } else {
       // Fetch open + closed separately (per_page=100 is GitHub API max)
-      // so both tabs have data and PR filtering doesn't drain the list
       const [fallbackOpenRes, fallbackClosedRes] = await Promise.all([
         fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100`, { headers }),
         fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=closed&per_page=100`, { headers }),
@@ -216,8 +220,6 @@ export default function Home() {
         setIssuesError(await parseApiError(backendIssuesRes));
       }
     }
-
-    setExtrasLoading(false);
   };
 
   const fetchAnalyzeData = async (issue, owner, repo) => {
