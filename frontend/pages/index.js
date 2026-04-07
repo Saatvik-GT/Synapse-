@@ -193,11 +193,14 @@ export default function Home() {
 
     setExtrasLoading(false);
 
-    // Issues — try backend first (may be slow on cold start), fall back to GitHub API
+    // Issues — try backend first with 20s timeout, fall back to GitHub API on slow cold start
     const backendIssuesUrl = buildIssueListUrl(process.env.NEXT_PUBLIC_API_BASE_URL, owner, repo);
     let backendIssuesRes;
     try {
-      backendIssuesRes = await fetch(backendIssuesUrl, { headers });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      backendIssuesRes = await fetch(backendIssuesUrl, { headers, signal: controller.signal });
+      clearTimeout(timeoutId);
     } catch {
       backendIssuesRes = { ok: false, status: 0, json: async () => ({}) };
     }
@@ -237,11 +240,12 @@ export default function Home() {
       const analyzeUrl = buildAnalyzeUrl(process.env.NEXT_PUBLIC_API_BASE_URL);
       const token = localStorage.getItem('gh_token') || null;
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
       const response = await fetch(analyzeUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           owner,
           repo,
@@ -252,6 +256,7 @@ export default function Home() {
           include_pull_requests: false,
         }),
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const err = await parseApiError(response);
@@ -261,7 +266,11 @@ export default function Home() {
       const payload = await response.json();
       setAnalyzeData(mapAnalyzePayload(payload));
     } catch (err) {
-      setAnalyzeError(err.message || 'Analyze request failed');
+      setAnalyzeError(
+        err.name === 'AbortError'
+          ? 'Backend timed out (cold start). Try again in a moment.'
+          : err.message || 'Analyze request failed'
+      );
     } finally {
       setAnalyzeLoading(false);
     }
